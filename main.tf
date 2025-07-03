@@ -117,3 +117,70 @@ resource "google_cloud_run_service_iam_member" "invoker" {
   role     = "roles/run.invoker"
   member   = "allUsers"  # Change to specific user or group for restricted access
 }
+
+# BigQuery Dataset
+resource "google_bigquery_dataset" "api_dataset" {
+  dataset_id    = "api_ingestion_dataset"
+  friendly_name = "API Ingestion Dataset"
+  description   = "Dataset for storing API ingestion data from various public APIs"
+  location      = var.region
+  
+  labels = {
+    env = "production"
+    team = "data-engineering"
+  }
+}
+
+# Very Simple BigLake External Table
+resource "google_bigquery_table" "api_ingestion_table" {
+  dataset_id = google_bigquery_dataset.api_dataset.dataset_id
+  table_id   = "api_data"
+  
+  description = "External table for API ingestion data"
+  
+  external_data_configuration {
+    source_format = "NEWLINE_DELIMITED_JSON"
+    autodetect    = true
+    
+    source_uris = [
+      "gs://${google_storage_bucket.data_bucket.name}/*"
+    ]
+  }
+  
+  depends_on = [
+    google_storage_bucket.data_bucket,
+    google_bigquery_dataset.api_dataset
+  ]
+}
+
+# Very Simple View - No assumptions about schema
+resource "google_bigquery_table" "api_data_view" {
+  dataset_id = google_bigquery_dataset.api_dataset.dataset_id
+  table_id   = "api_data_view"
+  
+  view {
+    query = <<EOF
+SELECT 
+  *,
+  _FILE_NAME as source_file
+FROM `${var.project_id}.${google_bigquery_dataset.api_dataset.dataset_id}.${google_bigquery_table.api_ingestion_table.table_id}`
+LIMIT 1000
+EOF
+    use_legacy_sql = false
+  }
+  
+  depends_on = [google_bigquery_table.api_ingestion_table]
+}
+
+# Keep the existing permissions (these are fine)
+resource "google_project_iam_member" "bigquery_data_viewer" {
+  project = var.project_id
+  role    = "roles/bigquery.dataViewer"
+  member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
+
+resource "google_project_iam_member" "bigquery_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
