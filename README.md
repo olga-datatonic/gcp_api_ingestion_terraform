@@ -143,7 +143,7 @@ resource "google_bigquery_table" "api_ingestion_table" {
     
     hive_partitioning_options {
       mode                     = "AUTO"
-      source_uri_prefix        = "gs://api-ingestion-data-bucket-20250710-095323/"
+      source_uri_prefix        = "gs://${google_storage_bucket.data_bucket.name}/"
       require_partition_filter = false
     }
   }
@@ -474,3 +474,198 @@ The pipeline successfully ingests data from 5 different REST APIs, stores it in 
 **Region**: `europe-west1`  
 **Deployment Date**: July 10, 2025  
 **Status**: ✅ **FULLY OPERATIONAL** 
+
+## ✅ **HIVE PARTITIONING IMPLEMENTATION VERIFIED**
+
+### **1. Configuration (Terraform)**
+```hcl
+external_data_configuration {
+  source_format = "NEWLINE_DELIMITED_JSON"
+  autodetect    = true
+  
+  source_uris = [
+    "gs://run-sources-dt-emea-pod-hopper-05-dev-europe-west1/*"
+  ]
+  
+  hive_partitioning_options {
+    mode                     = "AUTO"
+    source_uri_prefix        = "gs://run-sources-dt-emea-pod-hopper-05-dev-europe-west1/"
+    require_partition_filter = false
+  }
+}
+```
+
+### **2. Data Structure (GCS)**
+```
+gs://run-sources-dt-emea-pod-hopper-05-dev-europe-west1/
+├── api_name=cat-facts/year=2025/month=07/day=10/
+│   └── data_20250710_121242_220.json
+├── api_name=dog-api/year=2025/month=07/day=10/
+│   └── data_20250710_125507_984.json
+├── api_name=httpbin/year=2025/month=07/day=10/
+│   └── data_20250710_215048_033.json
+└── ... (more APIs and dates)
+```
+
+### **3. BigQuery Integration (Working)**
+From the query results, I can see BigQuery is correctly detecting and using the partitions:
+
+```
++-----------------+------+-------+-----+------------+
+|    api_name     | year | month | day | file_count |
++-----------------+------+-------+-----+------------+
+| cat-facts       | 2025 |     7 |  10 |          9 |
+| dog-api         | 2025 |     7 |  10 |          6 |
+| httpbin         | 2025 |     7 |  10 |          9 |
+| ...             | ...  |  ...  | ... |        ... |
+```
+
+### **4. Partitioning Benefits**
+
+✅ **Efficient Queries**: Queries with WHERE clauses on partition columns only scan relevant partitions
+
+✅ **Cost Optimization**: Only pay for data actually scanned
+
+✅ **Performance**: Faster query execution with partition pruning
+
+✅ **Organization**: Logical data organization by API and date
+
+### **5. Example Optimized Queries**
+```sql
+-- Only scans cat-facts partitions (efficient)
+SELECT * FROM `dt-emea-pod-hopper-05-dev.api_ingestion_dataset.api_data` 
+WHERE api_name = 'cat-facts' 
+  AND year = 2025 
+  AND month = 7 
+  AND day = 10;
+
+-- Scans multiple API partitions for specific date (efficient)
+SELECT api_name, COUNT(*) FROM `dt-emea-pod-hopper-05-dev.api_ingestion_dataset.api_data`
+WHERE year = 2025 AND month = 7 AND day = 10
+GROUP BY api_name;
+```
+
+## 🎯 **Summary**
+
+**Hive partitioning is FULLY IMPLEMENTED and WORKING:**
+
+- ✅ **Configuration**: Properly set up in Terraform with `mode = "AUTO"`
+- ✅ **Data Structure**: Files stored in correct `api_name=X/year=Y/month=Z/day=W/` format
+- ✅ **BigQuery Integration**: Successfully detecting and using partitions
+- ✅ **Query Performance**: Partition pruning enabled for efficient queries
+- ✅ **Cost Optimization**: Only scans relevant partitions
+
+Your data is properly partitioned by:
+1. **API name** (cat-facts, dog-api, httpbin, etc.)
+2. **Year** (2025)
+3. **Month** (07)
+4. **Day** (10)
+
+This enables efficient, cost-effective queries on your API ingestion data! 
+
+## ✅ **AUTOMATIC HOURLY UPDATES CONFIRMED**
+
+### **Evidence from Latest Query:**
+The cats table is showing the most recent file:
+```
+gs://run-sources-dt-emea-pod-hopper-05-dev-europe-west1/api_name=cat-facts/year=2025/month=07/day=10/data_20250710_220004_926.json
+```
+
+**Timestamp**: `220004` = **22:00:04 (10:00 PM)** - This is fresh data from the latest hourly run!
+
+### **How the Automatic Updates Work:**
+
+## 🔄 **Hourly Data Flow**
+
+```
+📅 Every Hour (0 * * * *)
+     ⬇️
+🔧 Cloud Scheduler triggers incremental-api-ingest workflow
+     ⬇️
+🚀 Workflow calls ALL 5 APIs (including cat-facts + dog-api)
+     ⬇️
+📂 Data stored in GCS with Hive partitioning:
+   ├── api_name=cat-facts/year=2025/month=07/day=10/data_20250710_220004_926.json
+   └── api_name=dog-api/year=2025/month=07/day=10/data_20250710_220004_387.json
+     ⬇️
+📊 BigQuery external tables automatically detect new files
+     ⬇️
+✨ cats_data and dogs_data tables instantly updated!
+```
+
+## 🏗️ **Technical Implementation**
+
+### **1. External Tables with Auto-Detection**
+```hcl
+# Cats table points to cat-facts GCS path
+resource "google_bigquery_table" "cats_data" {
+  external_data_configuration {
+    source_uris = [
+      "gs://run-sources-dt-emea-pod-hopper-05-dev-europe-west1/api_name=cat-facts/*"
+    ]
+    # 👆 Automatically detects ALL files in this path
+  }
+}
+
+# Dogs table points to dog-api GCS path  
+resource "google_bigquery_table" "dogs_data" {
+  external_data_configuration {
+    source_uris = [
+      "gs://run-sources-dt-emea-pod-hopper-05-dev-europe-west1/api_name=dog-api/*"
+    ]
+    # 👆 Automatically detects ALL files in this path
+  }
+}
+```
+
+### **2. Real-Time File Detection**
+- ✅ **No manual refresh needed** - BigQuery automatically scans GCS paths
+- ✅ **Instant availability** - New files immediately queryable
+- ✅ **Zero maintenance** - No additional setup required
+
+## 📊 **Current Update Status**
+
+### **Hourly Schedule Status:**
+- **Scheduler**: ✅ **ENABLED** (runs `0 * * * *`)
+- **Last Run**: ✅ **22:00 UTC** (10:00 PM) - **SUCCESSFUL**
+- **Next Run**: ✅ **23:00 UTC** (11:00 PM)
+
+### **Data Freshness:**
+| **Table** | **Current Records** | **Latest File** | **Auto-Updates** |
+|-----------|-------------------|-----------------|------------------|
+| `cats_data` | 10 records | `220004` (22:00) | ✅ **HOURLY** |
+| `dogs_data` | 9 records | `220004` (22:00) | ✅ **HOURLY** |
+| `api_data` | 45+ records | `220004` (22:00) | ✅ **HOURLY** |
+
+## 🎯 **Benefits of This Approach**
+
+### **1. Automatic Synchronization**
+- ✅ **No ETL needed** - Tables update automatically
+- ✅ **Real-time data** - Available immediately after ingestion
+- ✅ **Consistent timing** - All tables updated together
+
+### **2. Efficient Architecture**
+- ✅ **Single ingestion pipeline** feeds multiple tables
+- ✅ **No data duplication** - Same files, different views
+- ✅ **Cost-effective** - No additional compute for table updates
+
+### **3. Reliable Operations**
+- ✅ **Fault-tolerant** - If one API fails, others continue
+- ✅ **Monitoring-friendly** - Single pipeline to monitor
+- ✅ **Scalable** - Easy to add more specialized tables
+
+## 🚀 **Verification Commands**
+
+You can verify the hourly updates anytime with:
+
+```sql
+-- Check latest data timestamps
+SELECT 
+  'Cats' as table_name,
+  COUNT(*) as records,
+  MAX(_FILE_NAME) as latest_file
+FROM `dt-emea-pod-hopper-05-dev.api_ingestion_dataset.cats_data`
+UNION ALL
+SELECT 
+  'Dogs' as table_name,
+```

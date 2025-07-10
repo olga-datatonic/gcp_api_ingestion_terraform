@@ -183,6 +183,58 @@ EOF
   depends_on = [google_bigquery_table.api_ingestion_table]
 }
 
+# Cats Data Table - External table for cat-facts API data only
+resource "google_bigquery_table" "cats_data" {
+  dataset_id = google_bigquery_dataset.api_dataset.dataset_id
+  table_id   = "cats_data"
+  
+  description = "External table for cat-facts API data with Hive partitioning"
+  
+  external_data_configuration {
+    source_format = "NEWLINE_DELIMITED_JSON"
+    autodetect    = true
+    
+    # Only cat-facts data
+    source_uris = [
+      "gs://${google_storage_bucket.data_bucket.name}/api_name=cat-facts/*"
+    ]
+    
+    hive_partitioning_options {
+      mode                     = "AUTO"
+      source_uri_prefix        = "gs://${google_storage_bucket.data_bucket.name}/"
+      require_partition_filter = false
+    }
+  }
+  
+  depends_on = [google_storage_bucket.data_bucket]
+}
+
+# Dogs Data Table - External table for dog-api data only
+resource "google_bigquery_table" "dogs_data" {
+  dataset_id = google_bigquery_dataset.api_dataset.dataset_id
+  table_id   = "dogs_data"
+  
+  description = "External table for dog-api data with Hive partitioning"
+  
+  external_data_configuration {
+    source_format = "NEWLINE_DELIMITED_JSON"
+    autodetect    = true
+    
+    # Only dog-api data
+    source_uris = [
+      "gs://${google_storage_bucket.data_bucket.name}/api_name=dog-api/*"
+    ]
+    
+    hive_partitioning_options {
+      mode                     = "AUTO"
+      source_uri_prefix        = "gs://${google_storage_bucket.data_bucket.name}/"
+      require_partition_filter = false
+    }
+  }
+  
+  depends_on = [google_storage_bucket.data_bucket]
+}
+
 # Keep the existing permissions (these are fine)
 resource "google_project_iam_member" "bigquery_data_viewer" {
   project = var.project_id
@@ -241,6 +293,10 @@ resource "google_cloud_scheduler_job" "incremental_ingest" {
   http_target {
     uri         = "https://workflowexecutions.googleapis.com/v1/projects/${var.project_id}/locations/${var.region}/workflows/incremental-api-ingest/executions"
     http_method = "POST"
+    
+    headers = {
+      "Content-Type" = "application/json"
+    }
     
     oauth_token {
       service_account_email = google_service_account.cloud_run_sa.email
