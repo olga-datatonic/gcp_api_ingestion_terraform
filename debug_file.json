@@ -1,0 +1,31 @@
+{
+  "metadata": {
+    "ingestion_timestamp": "2025-07-10T10:58:53.656666Z",
+    "api_name": "httpbin",
+    "api_url": "https://httpbin.org/json",
+    "api_description": "HTTP testing service",
+    "response_status": 200,
+    "request_params": {}
+  },
+  "data": {
+    "slideshow": {
+      "author": "Yours Truly",
+      "date": "date of publication",
+      "slides": [
+        {
+          "title": "Wake up to WonderWidgets!",
+          "type": "all"
+        },
+        {
+          "items": [
+            "Why <em>WonderWidgets</em> are great",
+            "Who <em>buys</em> WonderWidgets"
+          ],
+          "title": "Overview",
+          "type": "all"
+        }
+      ],
+      "title": "Sample Slide Show"
+    }
+  }
+}

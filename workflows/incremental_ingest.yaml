@@ -1,0 +1,41 @@
+# Enhanced incremental ingestion workflow - calls all APIs
+main:
+  steps:
+    - init_vars:
+        assign:
+          - results: {}
+          - errors: []
+          - apis: ["httpbin", "jsonplaceholder", "reqres", "cat-facts", "dog-api"]
+    
+    - process_apis:
+        for:
+          value: api_name
+          in: ${apis}
+          steps:
+            - call_api:
+                try:
+                  call: http.get
+                  args:
+                    url: '${"https://api-ingest-424zvnon7q-ew.a.run.app/ingest/" + api_name}'
+                    timeout: 60
+                  result: api_result
+                except:
+                  as: e
+                  steps:
+                    - record_error:
+                        assign:
+                          - errors: ${list.concat(errors, [{"api": api_name, "error": e}])}
+                        next: continue
+                
+            - record_success:
+                assign:
+                  - results[api_name]: ${api_result.body}
+    
+    - return_result:
+        return:
+          status: "completed"
+          message: "Incremental ingestion finished"
+          successful_apis: ${len(results)}
+          failed_apis: ${len(errors)}
+          results: ${results}
+          errors: ${errors} 

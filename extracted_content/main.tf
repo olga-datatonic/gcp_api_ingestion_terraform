@@ -117,3 +117,55 @@ resource "google_cloud_run_service_iam_member" "invoker" {
   role     = "roles/run.invoker"
   member   = "allUsers"  # Change to specific user or group for restricted access
 }
+
+# Incremental Ingestion Workflow
+resource "google_workflows_workflow" "incremental_ingest" {
+  name            = "incremental-api-ingest"
+  region          = var.region
+  description     = "Hourly incremental API data ingestion"
+  service_account = google_service_account.cloud_run_sa.email
+  
+  source_contents = file("${path.module}/workflows/incremental_ingest.yaml")
+  
+  depends_on = [
+    google_project_service.workflows,
+    google_project_service.workflow_executions
+  ]
+}
+
+# Backfill Workflow
+resource "google_workflows_workflow" "backfill" {
+  name            = "api-data-backfill"
+  region          = var.region
+  description     = "Historical API data backfill workflow"
+  service_account = google_service_account.cloud_run_sa.email
+  
+  source_contents = file("${path.module}/workflows/backfill.yaml")
+  
+  depends_on = [
+    google_project_service.workflows,
+    google_project_service.workflow_executions
+  ]
+}
+
+# Scheduler for Incremental Workflow
+resource "google_cloud_scheduler_job" "incremental_ingest" {
+  name     = "incremental-api-ingest"
+  schedule = "0 * * * *"  # Every hour
+  region   = var.region
+  
+  http_target {
+    uri         = "https://workflowexecutions.googleapis.com/v1/projects/${var.project_id}/locations/${var.region}/workflows/incremental-api-ingest/executions"
+    http_method = "POST"
+    
+    oauth_token {
+      service_account_email = google_service_account.cloud_run_sa.email
+    }
+    
+    body = base64encode(jsonencode({
+      argument = {}
+    }))
+  }
+  
+  depends_on = [google_workflows_workflow.incremental_ingest]
+}

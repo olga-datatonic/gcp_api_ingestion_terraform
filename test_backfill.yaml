@@ -1,0 +1,15 @@
+# Minimal test backfill workflow
+main:
+  steps:
+    - test_call:
+        call: http.get
+        args:
+          url: "https://api-ingest-424zvnon7q-ew.a.run.app/ingest/httpbin"
+          timeout: 60
+        result: test_result
+    
+    - return_result:
+        return:
+          status: "completed"
+          message: "Test backfill completed"
+          result: ${test_result.body} 

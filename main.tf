@@ -71,6 +71,13 @@ resource "google_project_iam_member" "workflow_invoker" {
   member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
 }
 
+# Grant Cloud Run SA permissions to write logs
+resource "google_project_iam_member" "logging_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
+
 # (Optional) Grant Cloud Run service agent role if needed
 resource "google_project_iam_member" "cloud_run_service_agent" {
   project = var.project_id
@@ -131,26 +138,30 @@ resource "google_bigquery_dataset" "api_dataset" {
   }
 }
 
-# Very Simple BigLake External Table
+# BigLake External Table - Explicit Hive partitioning
 resource "google_bigquery_table" "api_ingestion_table" {
   dataset_id = google_bigquery_dataset.api_dataset.dataset_id
   table_id   = "api_data"
   
-  description = "External table for API ingestion data"
+  description = "External table for API ingestion data with Hive partitioning"
   
   external_data_configuration {
     source_format = "NEWLINE_DELIMITED_JSON"
     autodetect    = true
     
+    # Explicit source URIs for better partition detection
     source_uris = [
       "gs://${google_storage_bucket.data_bucket.name}/*"
     ]
+    
+    hive_partitioning_options {
+      mode                     = "AUTO"
+      source_uri_prefix        = "gs://${google_storage_bucket.data_bucket.name}/"
+      require_partition_filter = false
+    }
   }
   
-  depends_on = [
-    google_storage_bucket.data_bucket,
-    google_bigquery_dataset.api_dataset
-  ]
+  depends_on = [google_storage_bucket.data_bucket]
 }
 
 # Very Simple View - No assumptions about schema
@@ -183,4 +194,65 @@ resource "google_project_iam_member" "bigquery_job_user" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
   member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
+
+# Incremental Ingestion Workflow
+resource "google_workflows_workflow" "incremental_ingest" {
+  name            = "incremental-api-ingest"
+  region          = var.region
+  description     = "Hourly incremental API data ingestion"
+  service_account = google_service_account.cloud_run_sa.email
+  
+  source_contents = file("${path.module}/workflows/incremental_ingest.yaml")
+  
+  depends_on = [
+    google_project_service.workflows,
+    google_project_service.workflow_executions
+  ]
+}
+
+# Backfill Workflow
+resource "google_workflows_workflow" "backfill" {
+  name            = "api-data-backfill"
+  region          = var.region
+  description     = "Historical API data backfill workflow"
+  service_account = google_service_account.cloud_run_sa.email
+  
+  source_contents = file("${path.module}/workflows/backfill.yaml")
+  
+  depends_on = [
+    google_project_service.workflows,
+    google_project_service.workflow_executions
+  ]
+}
+
+# Cloud Scheduler API
+resource "google_project_service" "scheduler" {
+  service            = "cloudscheduler.googleapis.com"
+  disable_on_destroy = false
+}
+
+# Scheduler for Incremental Workflow
+resource "google_cloud_scheduler_job" "incremental_ingest" {
+  name     = "incremental-api-ingest"
+  schedule = "0 * * * *"  # Every hour
+  region   = var.region
+  
+  http_target {
+    uri         = "https://workflowexecutions.googleapis.com/v1/projects/${var.project_id}/locations/${var.region}/workflows/incremental-api-ingest/executions"
+    http_method = "POST"
+    
+    oauth_token {
+      service_account_email = google_service_account.cloud_run_sa.email
+    }
+    
+    body = base64encode(jsonencode({
+      argument = {}
+    }))
+  }
+  
+  depends_on = [
+    google_workflows_workflow.incremental_ingest,
+    google_project_service.scheduler
+  ]
 }

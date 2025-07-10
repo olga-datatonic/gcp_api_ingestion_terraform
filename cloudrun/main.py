@@ -94,16 +94,15 @@ def ingest_api(api_name):
         timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S_%f")[:-3]  # YYYYMMDD_HHMMSS_mmm
         filename = f"{partition_path}/data_{timestamp_str}.json"
         
+        # Create a flatter structure for BigQuery compatibility
         full_data = {
-            "metadata": {
-                "ingestion_timestamp": timestamp.isoformat().replace('+00:00', 'Z'),
-                "api_name": api_name,
-                "api_url": api_config["url"],
-                "api_description": api_config["description"],
-                "response_status": response.status_code,
-                "request_params": params if params else {}
-            },
-            "data": data
+            "ingestion_timestamp": timestamp.isoformat().replace('+00:00', 'Z'),
+            "api_name": api_name,
+            "api_url": api_config["url"],
+            "api_description": api_config["description"],
+            "response_status": response.status_code,
+            "request_params": json.dumps(params) if params else "{}",
+            "raw_data": json.dumps(data, separators=(',', ':'))  # Compact JSON string
         }
         
     except requests.exceptions.RequestException as e:
@@ -122,27 +121,57 @@ def ingest_api(api_name):
         }), 500
 
     try:
-        # Test JSON serialization
-        json_str = json.dumps(full_data, indent=2, ensure_ascii=False)
+        # Test JSON serialization first - compact format for BigQuery
+        json_str = json.dumps(full_data, separators=(',', ':'), ensure_ascii=False) + '\n'
         
+        # Validate that the JSON can be parsed back
+        json.loads(json_str)  # This will raise an exception if JSON is invalid
+        
+        # Add some basic validation
+        if len(json_str) < 50:  # JSON should be at least 50 characters
+            raise ValueError("Generated JSON is too short, likely corrupted")
+            
+        print(f"Generated JSON for {api_name}: {len(json_str)} characters")
+        
+        # Upload to GCS with retry logic
         bucket = storage_client.bucket(GCS_BUCKET)
         blob = bucket.blob(filename)
-        blob.upload_from_string(json_str, content_type='application/json')
+        
+        # Upload with explicit encoding
+        blob.upload_from_string(
+            json_str, 
+            content_type='application/json; charset=utf-8',
+            timeout=30
+        )
+        
+        # Verify the upload by checking blob exists and size
+        blob.reload()  # Refresh blob metadata
+        if blob.size != len(json_str.encode('utf-8')):
+            print(f"Warning: Upload size mismatch for {filename}")
+        
+        print(f"Successfully uploaded {filename} ({blob.size} bytes)")
         
         return jsonify({
             "status": "success",
             "api_name": api_name,
             "file": filename,
             "gcs_path": f"gs://{GCS_BUCKET}/{filename}",
+            "file_size_bytes": blob.size,
             "records_ingested": len(data) if isinstance(data, list) else 1,
-            "ingestion_timestamp": full_data["metadata"]["ingestion_timestamp"]
+            "ingestion_timestamp": full_data["ingestion_timestamp"]
         })
         
     except (TypeError, ValueError) as json_error:
-        print(f"JSON serialization error: {json_error}")
+        print(f"JSON serialization error for {api_name}: {json_error}")
         return jsonify({
             "status": "error", 
             "message": f"JSON serialization failed: {str(json_error)}"
+        }), 500
+    except Exception as upload_error:
+        print(f"Upload error for {api_name}: {upload_error}")
+        return jsonify({
+            "status": "error", 
+            "message": f"Upload failed: {str(upload_error)}"
         }), 500
 
 @app.route("/ingest-all")
