@@ -66,7 +66,7 @@ This project implements a complete, **fully operational** data ingestion pipelin
 - `jsonplaceholder` - Fake JSON API
 - `reqres` - RESTful API testing
 - `cat-facts` - Random cat facts
-- `dog-api` - Random dog images/facts
+- `dog-api` - Random dog facts
 
 **Hive Partitioning Structure:**
 ```
@@ -508,7 +508,7 @@ gs://run-sources-dt-emea-pod-hopper-05-dev-europe-west1/
 ```
 
 ### **3. BigQuery Integration (Working)**
-From the query results, I can see BigQuery is correctly detecting and using the partitions:
+From the query results, BigQuery is correctly detecting and using the partitions:
 
 ```
 +-----------------+------+-------+-----+------------+
